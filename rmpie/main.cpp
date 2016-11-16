@@ -25,7 +25,7 @@ uint32_t Swap32(uint32_t magic , uint32_t value)
     return value;
 }
 
-void SwapMachHeader(uint32_t magic,mach_header *header)
+void SwapMachHeader(uint32_t magic, mach_header *header)
 {
     header->cputype = Swap32(magic, header->cputype);
     header->cpusubtype = Swap32(magic, header->cpusubtype);
@@ -52,18 +52,19 @@ void BackupFile(FILE *fi,const char *output_path)
 
 void fpeek(void *buffer,size_t size,size_t len,FILE *file)
 {
-    off_t ori_offset = fseeko(file, 0, SEEK_CUR);
+    off_t ori_offset = ftello(file);
     fread(buffer, size, len, file);
     fseeko(file, ori_offset, SEEK_SET);
 }
 
-void RemoveArchPIE(FILE *fi,uint32_t offset,uint32_t magic)
+void RemoveArchPIE(FILE *fi,uint32_t offset)
 {
     fseeko(fi, offset, SEEK_SET);
     printf("载入文件头...\n");
     mach_header mah;
     fread(&mah, sizeof(mah), 1, fi);
-    SwapMachHeader(magic, &mah);
+    uint32_t mach_magic = mah.magic;
+    SwapMachHeader(mach_magic, &mah);
     if (mah.filetype != MH_EXECUTE) {
         printf("不是可执行文件，不作处理\n");
         return;
@@ -80,7 +81,7 @@ void RemoveArchPIE(FILE *fi,uint32_t offset,uint32_t magic)
     printf("写回文件...\n");
     fseeko(fi, offset, SEEK_SET);
     
-    SwapMachHeader(magic, &mah);
+    SwapMachHeader(mach_magic, &mah);
     
     fwrite(&mah, sizeof(mah), 1, fi);
     
@@ -108,18 +109,21 @@ int main(int argc, const char * argv[]) {
     fpeek(&magic, sizeof(magic), 1, fi);
     if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
         fat_header fh;
-        fpeek(&fh,sizeof(fh),1,fi);
+        fread(&fh,sizeof(fh),1,fi);
         uint32_t archs = Swap32(magic, fh.nfat_arch);
         printf("文件为fat Mach-O，共有 %d 个archs",archs);
         for (uint32_t i = 0; i < archs; ++i) {
             fat_arch arch;
             fread(&arch, sizeof(arch), 1, fi);
-            RemoveArchPIE(fi,arch.offset,magic);
+            off_t arch_offset = ftello(fi);
+            uint32_t offset = Swap32(magic, arch.offset);
+            RemoveArchPIE(fi,offset);
+            fseeko(fi, arch_offset, SEEK_SET);
         }
     }
     else
     {
-        RemoveArchPIE(fi,0,magic);
+        RemoveArchPIE(fi,0);
     }
     
     fflush(fi);
